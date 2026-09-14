@@ -1,0 +1,88 @@
+name: RoScouting collector
+
+# Un run par heure, qui enchaîne un cycle toutes les 5 minutes pendant ~52 min.
+# C'est plus fiable qu'un cron toutes les 5 min : les crons GitHub sont souvent
+# retardés de 10 à 20 minutes, alors qu'un run déjà démarré, lui, tourne à l'heure.
+on:
+  schedule:
+    - cron: "2 * * * *"
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: "Nombre de cycles (1 pour un test rapide)"
+        default: "11"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: roscouting-collector
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 58
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      # Les données vivent sur une branche à part : un push dessus ne déclenche
+      # pas de reconstruction de GitHub Pages (limitée à 10 builds par heure).
+      - name: Préparer la branche de données
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$URL" data >/dev/null 2>&1; then
+            git clone --branch data --single-branch --depth 1 "$URL" data
+          else
+            mkdir -p data && cd data && git init -q -b data
+            git remote add origin "$URL"
+          fi
+          cd data
+          git config user.name "roscouting-bot"
+          git config user.email "bot@users.noreply.github.com"
+
+      - name: Cycles de collecte
+        env:
+          ONCE: "1"
+          MAX_DETAIL: "2600"
+        run: |
+          N="${{ github.event.inputs.cycles || 11 }}"
+          for i in $(seq 1 "$N"); do
+            START=$(date +%s)
+            echo "::group::cycle $i / $N"
+            node collect.mjs || echo "cycle en échec, on continue"
+            echo "::endgroup::"
+
+            cd data
+            git add -A
+            if git rev-parse HEAD >/dev/null 2>&1; then
+              git commit -q --amend --no-edit -m "radar $(date -u +%FT%TZ)" || true
+            else
+              git commit -q -m "radar $(date -u +%FT%TZ)" || true
+            fi
+            git push -q --force origin data
+            cd ..
+
+            ELAPSED=$(( $(date +%s) - START ))
+            WAIT=$(( 300 - ELAPSED ))
+            if [ "$i" -lt "$N" ] && [ "$WAIT" -gt 0 ]; then
+              echo "cycle en ${ELAPSED}s, pause ${WAIT}s"
+              sleep "$WAIT"
+            fi
+          done
+
+      - name: Résumé
+        if: always()
+        run: |
+          echo "### Dernier relevé" >> $GITHUB_STEP_SUMMARY
+          node -e '
+            const d=require("./data/radar.json");
+            const c=d.counts;
+            console.log(`- ${c.scanned} jeux analysés, ${c.universe} suivis au total`);
+            console.log(`- ${c.rejectedModded} modded écartés, ${c.kept} retenus`);
+            console.log(`- tendances : ${d.trending.map(t=>t.tag).slice(0,10).join(", ")}`);
+          ' >> $GITHUB_STEP_SUMMARY || echo "pas de radar.json" >> $GITHUB_STEP_SUMMARY
