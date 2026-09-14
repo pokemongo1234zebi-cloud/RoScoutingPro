@@ -92,7 +92,7 @@ nav.rs-nav{display:flex;flex-direction:column;gap:4px}
 /* — main — */
 .rs-main{min-width:0;position:relative}
 .hero-bg{position:absolute;top:0;left:0;right:0;height:280px;pointer-events:none;overflow:hidden}
-.hero-bg .img{position:absolute;inset:0;background:url('assets/hero-bg.jpg') right top / cover no-repeat;
+.hero-bg .img{position:absolute;inset:0;background:url('hero-bg.jpg') right top / cover no-repeat;
   filter:hue-rotate(150deg) saturate(1.2) brightness(.7)}
 .hero-bg .veil{position:absolute;inset:0;background:
   linear-gradient(90deg,var(--bg) 0%,color-mix(in srgb,var(--bg) 55%,transparent) 45%,rgba(30,10,50,.25) 100%),
