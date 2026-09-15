@@ -5,12 +5,16 @@ name: RoScouting collector
 # retardés de 10 à 20 minutes, alors qu'un run déjà démarré, lui, tourne à l'heure.
 on:
   schedule:
-    - cron: "2 * * * *"
+    # Six déclenchements par heure. Les crons GitHub sont en file d'attente basse
+    # priorité et sont parfois purement sautés : en multiplier le nombre fait
+    # qu'un saut coûte 10 minutes au lieu d'une heure. Le verrou « concurrency »
+    # plus bas garantit qu'un seul run tourne à la fois.
+    - cron: "2,12,22,32,42,52 * * * *"
   workflow_dispatch:
     inputs:
       cycles:
-        description: "Nombre de cycles (1 pour un test rapide)"
-        default: "11"
+        description: "Nombre de cycles (1 pour un test rapide, 68 = run complet)"
+        default: "68"
 
 permissions:
   contents: write
@@ -22,7 +26,8 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 58
+    # 5 h 50. Un seul déclenchement réussi couvre donc presque six heures.
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
@@ -53,7 +58,8 @@ jobs:
           ONCE: "1"
           MAX_DETAIL: "2600"
         run: |
-          N="${{ github.event.inputs.cycles || 11 }}"
+          N="${{ github.event.inputs.cycles || 68 }}"
+          DEADLINE=$(( $(date +%s) + 340*60 ))   # on s'arrête avant le timeout du job
           for i in $(seq 1 "$N"); do
             START=$(date +%s)
             echo "::group::cycle $i / $N"
@@ -70,6 +76,12 @@ jobs:
 
             ELAPSED=$(( $(date +%s) - START ))
             WAIT=$(( 300 - ELAPSED ))
+            [ "$WAIT" -lt 0 ] && WAIT=0
+            NEXT=$(( $(date +%s) + WAIT ))
+            if [ "$NEXT" -ge "$DEADLINE" ]; then
+              echo "fin de la fenêtre du run, on s'arrête proprement au cycle $i"
+              break
+            fi
             if [ "$i" -lt "$N" ] && [ "$WAIT" -gt 0 ]; then
               echo "cycle en ${ELAPSED}s, pause ${WAIT}s"
               sleep "$WAIT"
